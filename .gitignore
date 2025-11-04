@@ -1,0 +1,29 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+
+# Output folders
+bin/
+build/
+
+# Logs
+*.log
+
+# Go build cache
+*.out
+
+# IDE stuff
+.vscode/
+.idea/
+
+# Mac OS junk
+.DS_Store
+
+# Godot (if you add client code later)
+.import/
+.export/
+*.import
