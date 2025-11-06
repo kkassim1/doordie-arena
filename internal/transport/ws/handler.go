@@ -40,7 +40,7 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	// For now, each connection creates/joins the "default" match when it sends a "join" message.
+	// Connection-scoped state: the player and match for this client
 	var player *game.Player
 	var match *game.Match
 
@@ -81,6 +81,8 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 				ID:   game.NewPlayerID(),
 				Name: jp.Name,
 				Type: game.PlayerTypeHuman,
+				X:    0,
+				Y:    0,
 			}
 
 			match = h.matchManager.GetOrCreateMatch("default")
@@ -99,6 +101,58 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 			if err := writeJSON(ctx, conn, out); err != nil {
 				log.Printf("write welcome error to %s: %v", r.RemoteAddr, err)
+				return
+			}
+		case "input":
+			// Make sure they joined first
+			if player == nil || match == nil {
+				log.Printf("received input before join from %s", r.RemoteAddr)
+				continue
+			}
+
+			// Parse input payload
+			var ip InputPayload
+			if err := json.Unmarshal(incoming.Payload, &ip); err != nil {
+				log.Printf("invalid input payload from %s: %v", r.RemoteAddr, err)
+				continue
+			}
+
+			// Update player position based on input
+			const step = 1.0
+
+			switch ip.Input {
+			case "move_up":
+				player.Y += step
+			case "move_down":
+				player.Y -= step
+			case "move_left":
+				player.X -= step
+			case "move_right":
+				player.X += step
+			default:
+				log.Printf("unknown input %q from %s", ip.Input, r.RemoteAddr)
+			}
+			// Build a state snapshot and send back
+			snap := match.Snapshot()
+			playerStates := make([]PlayerState, 0, len(snap))
+			for _, ps := range snap {
+				playerStates = append(playerStates, PlayerState{
+					ID:   string(ps.ID),
+					Name: ps.Name,
+					X:    ps.X,
+					Y:    ps.Y,
+				})
+			}
+
+			stateMsg := OutgoingMessage{
+				Type: "state",
+				Payload: StatePayload{
+					MatchID: match.ID,
+					Players: playerStates,
+				},
+			}
+			if err := writeJSON(ctx, conn, stateMsg); err != nil {
+				log.Printf("write state error to %s: %v", r.RemoteAddr, err)
 				return
 			}
 

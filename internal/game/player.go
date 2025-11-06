@@ -20,5 +20,10 @@ type Player struct {
 	ID   PlayerID
 	Name string
 	Type PlayerType
+
+	// Very simple 2D position for now
+	X float64
+	Y float64
+
 	// Later: position, velocity, health, score, etc.
 }
