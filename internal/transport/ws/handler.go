@@ -2,17 +2,29 @@ package ws
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"time"
 
+	"github.com/kkassim1/doordie-arena/internal/game"
 	"nhooyr.io/websocket"
 )
 
-// For now this is a super simple echo handler so we can verify
-// Godot <-> Go connectivity. Later we’ll plug this into the game.Match.
-func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-	// Accept the WebSocket connection
+// Handler holds dependencies for WebSocket connections.
+type Handler struct {
+	matchManager *game.MatchManager
+}
+
+// NewHandler creates a new WebSocket handler.
+func NewHandler(mm *game.MatchManager) *Handler {
+	return &Handler{
+		matchManager: mm,
+	}
+}
+
+// HandleWebSocket is the HTTP → WebSocket upgrade entrypoint.
+func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: []string{"*"}, // TODO: tighten this in production
 	})
@@ -28,24 +40,84 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
+	// For now, each connection creates/joins the "default" match when it sends a "join" message.
+	var player *game.Player
+	var match *game.Match
+
 	for {
-		// Read a message from the client
 		msgType, data, err := conn.Read(ctx)
 		if err != nil {
 			log.Printf("read error from %s: %v", r.RemoteAddr, err)
 			return
 		}
 
-		log.Printf("recv from %s: %s", r.RemoteAddr, string(data))
+		if msgType != websocket.MessageText {
+			log.Printf("ignoring non-text message from %s", r.RemoteAddr)
+			continue
+		}
 
-		// For now: echo it back
-		writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		err = conn.Write(writeCtx, msgType, data)
-		cancel()
+		// Decode the incoming JSON message
+		var incoming IncomingMessage
+		if err := json.Unmarshal(data, &incoming); err != nil {
+			log.Printf("invalid JSON from %s: %v", r.RemoteAddr, err)
+			continue
+		}
 
-		if err != nil {
-			log.Printf("write error to %s: %v", r.RemoteAddr, err)
-			return
+		switch incoming.Type {
+		case "join":
+			// Parse join payload
+			var jp JoinPayload
+			if err := json.Unmarshal(incoming.Payload, &jp); err != nil {
+				log.Printf("invalid join payload from %s: %v", r.RemoteAddr, err)
+				continue
+			}
+
+			if jp.Name == "" {
+				jp.Name = "Player"
+			}
+
+			// Create a new player and add to the default match
+			player = &game.Player{
+				ID:   game.NewPlayerID(),
+				Name: jp.Name,
+				Type: game.PlayerTypeHuman,
+			}
+
+			match = h.matchManager.GetOrCreateMatch("default")
+			match.AddPlayer(player)
+
+			log.Printf("player %s joined match %s", player.Name, match.ID)
+
+			// Send welcome message back
+			out := OutgoingMessage{
+				Type: "welcome",
+				Payload: WelcomePayload{
+					PlayerID: string(player.ID),
+					MatchID:  match.ID,
+				},
+			}
+
+			if err := writeJSON(ctx, conn, out); err != nil {
+				log.Printf("write welcome error to %s: %v", r.RemoteAddr, err)
+				return
+			}
+
+		default:
+			// For now, log unknown message types.
+			log.Printf("unknown message type %q from %s", incoming.Type, r.RemoteAddr)
 		}
 	}
+}
+
+// writeJSON writes a JSON message to the WebSocket with a timeout.
+func writeJSON(ctx context.Context, conn *websocket.Conn, msg OutgoingMessage) error {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	return conn.Write(writeCtx, websocket.MessageText, data)
 }
