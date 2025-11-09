@@ -64,6 +64,7 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 
 		switch incoming.Type {
+
 		case "join":
 			// Parse join payload
 			var jp JoinPayload
@@ -103,6 +104,7 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 				log.Printf("write welcome error to %s: %v", r.RemoteAddr, err)
 				return
 			}
+
 		case "input":
 			// Make sure they joined first
 			if player == nil || match == nil {
@@ -117,21 +119,9 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			// Update player position based on input
-			const step = 1.0
+			// Let the game layer apply the input under lock
+			match.ApplyInput(player.ID, ip.Input)
 
-			switch ip.Input {
-			case "move_up":
-				player.Y += step
-			case "move_down":
-				player.Y -= step
-			case "move_left":
-				player.X -= step
-			case "move_right":
-				player.X += step
-			default:
-				log.Printf("unknown input %q from %s", ip.Input, r.RemoteAddr)
-			}
 			// Build a state snapshot and send back
 			snap := match.Snapshot()
 			playerStates := make([]PlayerState, 0, len(snap))
@@ -151,6 +141,7 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 					Players: playerStates,
 				},
 			}
+
 			if err := writeJSON(ctx, conn, stateMsg); err != nil {
 				log.Printf("write state error to %s: %v", r.RemoteAddr, err)
 				return
