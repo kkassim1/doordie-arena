@@ -7,11 +7,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/kkassim1/doordie-arena/internal/game"
-	"nhooyr.io/websocket"
 )
 
-// testtttttttt
 // Handler holds dependencies for WebSocket connections.
 type Handler struct {
 	matchManager *game.MatchManager
